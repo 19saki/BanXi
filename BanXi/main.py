@@ -1,13 +1,19 @@
 import sys
 from PySide6 import QtWidgets
+
+
+from repeat_tasks import init_repeat_tasks
 from window import MainWindow
 from db import init_db
 from style import STYLE
 
 def main():
     init_db()
+    init_repeat_tasks()
+
     app = QtWidgets.QApplication(sys.argv)
     app.setStyleSheet(STYLE)
+
     win = MainWindow()
     win.show()
     win.on_tab_changed(win.tab_widget.currentIndex())
