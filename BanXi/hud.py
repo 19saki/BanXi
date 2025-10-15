@@ -3,27 +3,49 @@ from PySide6 import QtWidgets, QtCore
 import db
 from db import get_user  # 导入获取用户信息的函数
 
+from PySide6 import QtWidgets, QtCore, QtGui
+
+import db
+from db import get_user
+
+
+from PySide6 import QtWidgets, QtCore, QtGui
 class TopHUD(QtWidgets.QWidget):
     def __init__(self, user_id=None, parent=None):
         super().__init__(parent)
-        self.user_id = user_id  # 当前显示的用户ID
-        self.last_level = None  # 上一次显示的等级
-        self.last_xp = None     # 上一次显示的经验值
-        self._anim = None       # 用于保存进度条动画对象，避免重复创建
+        self.user_id = user_id
+        self.last_level = None
+        self.last_xp = None
+        self._anim = None
 
-        # 设置顶部 HUD 高度固定
+        # 金币动画相关变量
+        self.current_coins = 0
+        self.target_coins = 0
+        self.pending_change = 0
+        self.animation_start_coins = 0
+        self.animation_total_change = 0
+
+        # 金币动画时间参数
+        self.change_delay = 1500
+        self.animation_duration = 2000
+
+        self.change_timer = QtCore.QTimer()
+        self.change_timer.setSingleShot(True)
+        self.change_timer.timeout.connect(self.start_coin_animation)
+
+        # 动画相关
+        self.animation_timer = QtCore.QTimer()
+        self.animation_timer.timeout.connect(self.update_coin_animation)
+        self.animation_duration = 1500
+        self.animation_start_time = 0
+        self.is_animating = False
+
         self.setFixedHeight(60)
+        self.setStyleSheet("background: #0f1720; color: #e6eef8;")
 
-        # 设置 TopHUD 背景和文字颜色（这里取消了渐变，使用纯色）
-        self.setStyleSheet("""
-             background: #0f1720;
-             color: #e6eef8;
-        """)
-
-        # 水平布局，容纳等级标签、经验条和金币标签
         layout = QtWidgets.QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)  # 内边距
-        layout.setSpacing(16)  # 子控件之间的间距
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(16)
 
         # 等级标签
         self.level_label = QtWidgets.QLabel("Lv -")
@@ -32,66 +54,86 @@ class TopHUD(QtWidgets.QWidget):
 
         # 经验值进度条
         self.xp_bar = QtWidgets.QProgressBar()
-        self.xp_bar.setTextVisible(True)  # 显示文本
+        self.xp_bar.setTextVisible(True)
         self.xp_bar.setFixedHeight(20)
         self.xp_bar.setStyleSheet("""
             QProgressBar {
                 border-radius: 10px;
-                background: rgba(255,255,255,0.03);  # 背景半透明
-                text-align: center;                  # 文本居中
+                background: rgba(255,255,255,0.03);
+                text-align: center;
             }
             QProgressBar::chunk {
                 border-radius: 10px;
                 background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #6c63ff, stop:1 #1f6feb);
-                # 如果想取消渐变，可以改成单色，例如 background: #6c63ff;
             }
         """)
-        layout.addWidget(self.xp_bar, stretch=1)  # stretch=1 使进度条拉伸占满剩余空间
+        layout.addWidget(self.xp_bar, stretch=1)
 
         # 金币标签
-        self.coin_label = QtWidgets.QLabel("G 0")
-        self.coin_label.setStyleSheet("font-size:12pt; color: #FFD166;")
-        layout.addWidget(self.coin_label)
+        self.coin_container = QtWidgets.QWidget()
+        coin_layout = QtWidgets.QHBoxLayout(self.coin_container)
+        coin_layout.setContentsMargins(0, 0, 0, 0)
+        coin_layout.setSpacing(4)
 
-        # 占位填充，保持左侧控件靠左显示
+        self.coin_icon = QtWidgets.QLabel("G")
+        self.coin_icon.setStyleSheet("font-size:12pt; color: #FFD166;")
+
+        self.coin_label = QtWidgets.QLabel("0")
+        self.coin_label.setStyleSheet("font-size:12pt; color: #FFD166;")
+
+        self.change_label = QtWidgets.QLabel("")
+        self.change_label.setStyleSheet("font-size:10pt; color: #888;")
+
+        coin_layout.addWidget(self.coin_icon)
+        coin_layout.addWidget(self.coin_label)
+        coin_layout.addWidget(self.change_label)
+
+        layout.addWidget(self.coin_container)
         layout.addStretch()
 
-    # -------------------------
-    # 获取用户信息
-    # -------------------------
-    def _fetch_user(self):
-        if self.user_id is None:
-            return None
-        return get_user(self.user_id)
-
-    # -------------------------
-    # 设置显示的用户ID
-    # -------------------------
     def set_user(self, user_id):
+        """设置用户，重置动画状态"""
         self.user_id = user_id
+        self.reset_coin_animation()
+        # 立即更新显示，但不要重置金币数值
+        u = self._fetch_user()
+        if u:
+            uid, name, xp, level, coins = u
+            # 只更新显示，不触发动画
+            self.current_coins = coins
+            self.target_coins = coins
+            self.coin_label.setText(str(coins))
+            self.change_label.setText("")
 
-    # -------------------------
-    # 更新 HUD 显示
-    # -------------------------
+    def reset_coin_animation(self):
+        """重置金币动画状态"""
+        self.change_timer.stop()
+        self.animation_timer.stop()
+        self.is_animating = False
+        self.pending_change = 0
+        self.change_label.setText("")
+
     def update_display(self, user_id=None):
+        """更新显示，保持原有的动画逻辑"""
         if user_id is not None:
             self.user_id = user_id
 
-        u = self._fetch_user()  # 获取用户数据
+        u = self._fetch_user()
         if not u:
             return
 
-        # 拆包用户信息
         uid, name, xp, level, coins = u
+        xp_needed_new = db.get_xp_required_for_level(level)
 
-
-
-        xp_needed_new =  xp_need = db.get_xp_required_for_level(level)
+        # 处理金币变化 - 总是触发动画逻辑
+        self.handle_coin_change(coins)
 
         # 第一次显示时直接初始化显示
         if self.last_level is None:
             self.level_label.setText(f"Lv {level}")
-            self.coin_label.setText(f"G {coins}")
+            self.current_coins = coins
+            self.target_coins = coins
+            self.coin_label.setText(str(coins))
             self.xp_bar.setMaximum(xp_needed_new)
             self.xp_bar.setValue(xp)
             self.xp_bar.setFormat(f"XP: {xp}/{xp_needed_new}")
@@ -99,68 +141,166 @@ class TopHUD(QtWidgets.QWidget):
             self.last_xp = xp
             return
 
-        # -------------------------
-        # 内部函数：动画过渡经验值
-        # -------------------------
+        # 经验值动画逻辑（保持不变）
         def animate_value(start, end, duration=500, finished_cb=None):
-            if self._anim is not None:  # 停止之前的动画
+            if self._anim is not None:
                 try:
                     self._anim.stop()
                 except Exception:
                     pass
-            anim = QtCore.QPropertyAnimation(self.xp_bar, b"value")  # 动画作用于 QProgressBar.value 属性
+            anim = QtCore.QPropertyAnimation(self.xp_bar, b"value")
             anim.setDuration(duration)
             anim.setStartValue(start)
             anim.setEndValue(end)
             if finished_cb:
-                anim.finished.connect(finished_cb)  # 动画结束回调
+                anim.finished.connect(finished_cb)
             self._anim = anim
             anim.start()
 
-        # -------------------------
-        # 升级逻辑
-        # -------------------------
         if level == self.last_level:
-            # 等级未变，只更新经验值
             self.xp_bar.setMaximum(xp_needed_new)
             self.xp_bar.setFormat(f"XP: {xp}/{xp_needed_new}")
             animate_value(self.last_xp, xp, duration=500, finished_cb=lambda: self._on_anim_finished(level, xp))
 
         elif level > self.last_level:
-            # 等级升高，需要先动画填满旧等级进度条
-            old_needed = 100 * self.last_level
+            old_needed = db.get_xp_required_for_level(self.last_level)
             new_needed = xp_needed_new
 
             def after_fill_old():
-                # 更新为新等级
                 self.level_label.setText(f"Lv {level}")
-                self.coin_label.setText(f"G {coins}")
                 self.xp_bar.setMaximum(new_needed)
                 self.xp_bar.setValue(0)
                 self.xp_bar.setFormat(f"XP: {xp}/{new_needed}")
                 animate_value(0, xp, duration=600, finished_cb=lambda: self._on_anim_finished(level, xp))
 
-            # 动画填满旧等级
             self.xp_bar.setMaximum(old_needed)
             self.xp_bar.setFormat(f"XP: {old_needed}/{old_needed}")
             animate_value(self.last_xp, old_needed, duration=450, finished_cb=after_fill_old)
 
         else:
-            # 等级下降（理论上不常见）
             self.level_label.setText(f"Lv {level}")
-            self.coin_label.setText(f"G {coins}")
             self.xp_bar.setMaximum(xp_needed_new)
             self.xp_bar.setValue(xp)
             self.xp_bar.setFormat(f"XP: {xp}/{xp_needed_new}")
             self._on_anim_finished(level, xp)
 
-    # -------------------------
-    # 动画完成后更新最后显示值
-    # -------------------------
+    def handle_coin_change(self, new_coins):
+        """处理金币变化，触发动画"""
+        # 如果是第一次设置或者切换用户后，直接设置数值
+        if self.current_coins == 0 and not self.is_animating:
+            self.current_coins = new_coins
+            self.target_coins = new_coins
+            self.coin_label.setText(str(new_coins))
+            return
+
+        # 如果没有变化，直接返回
+        if new_coins == self.target_coins:
+            return
+
+        change = new_coins - self.target_coins
+
+        if self.is_animating:
+            # 如果正在动画中，累积变化
+            self.pending_change += change
+            self.target_coins = new_coins
+            self.update_change_label_immediately()
+            # 重新开始计时
+            self.change_timer.start(self.change_delay)
+        else:
+            # 没有动画时，累积变化而不是重置
+            self.pending_change += change  # 改为累积而不是重置
+            self.target_coins = new_coins
+            self.update_change_label_immediately()
+            # 开始计时器，增加延迟时间让用户多看一会
+            self.change_timer.start(self.change_delay + 500)  # 增加500ms延迟
+
+    def start_coin_animation(self):
+        """开始金币动画"""
+        if self.pending_change == 0:
+            self.change_label.setText("")
+            return
+
+        # 保存动画开始前的状态
+        # 注意：这里使用 current_coins 作为起始值，而不是 target_coins - pending_change
+        self.animation_start_coins = self.current_coins
+        self.animation_total_change = self.pending_change
+
+        # 开始动画
+        self.animation_start_time = QtCore.QDateTime.currentDateTime().toMSecsSinceEpoch()
+        self.is_animating = True
+        self.animation_timer.start(16)
+
+    def update_coin_animation(self):
+        """更新金币动画"""
+        current_time = QtCore.QDateTime.currentDateTime().toMSecsSinceEpoch()
+        elapsed = current_time - self.animation_start_time
+        progress = min(elapsed / self.animation_duration, 1.0)
+
+        if progress >= 1.0:
+            # 动画结束
+            self.animation_timer.stop()
+            self.current_coins = self.target_coins  # 直接设置为目标值
+            self.coin_label.setText(str(self.current_coins))
+            self.change_label.setText("")
+            self.pending_change = 0
+            self.is_animating = False
+        else:
+            # 使用缓动函数让动画更自然
+            eased_progress = self.ease_out_cubic(progress)
+
+            # 计算当前显示的金币数（从动画开始时的数值开始）
+            animated_coins = self.animation_start_coins + int(self.animation_total_change * eased_progress)
+            self.coin_label.setText(str(animated_coins))
+
+            # 更新变化标签（逐渐减少并变淡）
+            remaining_change = self.animation_total_change - int(self.animation_total_change * eased_progress)
+            if remaining_change > 0:
+                self.change_label.setText(f"+{remaining_change}")
+            elif remaining_change < 0:
+                self.change_label.setText(f"{remaining_change}")
+            else:
+                self.change_label.setText("")
+
+            # 变化标签逐渐变淡
+            alpha = int(255 * (1 - progress * 0.8))
+            if self.animation_total_change > 0:
+                self.change_label.setStyleSheet(f"""
+                    font-size: 11pt; 
+                    color: rgba(102, 187, 106, {alpha / 255}); 
+                    font-weight: bold;
+                """)
+            else:
+                self.change_label.setStyleSheet(f"""
+                    font-size: 11pt; 
+                    color: rgba(239, 83, 80, {alpha / 255}); 
+                    font-weight: bold;
+                """)
+
+    def update_change_label_immediately(self):
+        """立即更新变化标签显示"""
+        if self.pending_change > 0:
+            self.change_label.setText(f"+{self.pending_change}")
+            self.change_label.setStyleSheet("color: #66BB6A; font-weight: bold; font-size: 12pt;")
+        else:
+            self.change_label.setText(f"{self.pending_change}")
+            self.change_label.setStyleSheet("color: #EF5350; font-weight: bold; font-size: 12pt;")
+
+
+
+
+
+
+
+    def ease_out_cubic(self, x):
+        """缓动函数：缓出立方"""
+        return 1 - pow(1 - x, 3)
+
+    def _fetch_user(self):
+        if self.user_id is None:
+            return None
+        return get_user(self.user_id)
+
     def _on_anim_finished(self, level, xp):
         self.last_level = level
         self.last_xp = xp
         self.level_label.setText(f"Lv {level}")
-        self.coin_label.setText(
-            f"🪙 {get_user(self.user_id)[4] if get_user(self.user_id) else 0}"
-        )
