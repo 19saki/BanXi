@@ -15,8 +15,8 @@ from repeat_task_dialog import AddRepeatTaskDialog
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("伴习 v0.1.7")  # 更新版本号
-        self.resize(1000, 680)  # 稍微增加窗口大小以适应新标签页
+        self.setWindowTitle("伴习 v1.0.0 正式版发布!")  # 更新版本号
+        self.resize(1000, 680)
         main = QtWidgets.QWidget()
         main_layout = QtWidgets.QHBoxLayout()
         main.setLayout(main_layout)
@@ -34,6 +34,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.left_layout_inner.setContentsMargins(12, 12, 12, 12)
         self.left_layout_inner.setSpacing(12)
         self.left.setLayout(self.left_layout_inner)
+
+        # 在初始化时添加一个弹性空间在底部，这样卡片就会靠上
+        self.left_layout_inner.addStretch()
 
         # placeholders for dynamic user cards
         self.user_cards = {}
@@ -162,23 +165,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.highlight_selected_user()
         self.refresh_all()
-    def reload_user_cards(self):
 
+    def reload_user_cards(self):
+        # 清除现有卡片（但保留底部的弹性空间）
         for i in reversed(range(self.left_layout_inner.count())):
-            w = self.left_layout_inner.itemAt(i).widget()
-            if w:
-                w.setParent(None)
-        # load users again
+            item = self.left_layout_inner.itemAt(i)
+            if item and item.widget():
+                item.widget().setParent(None)
+
+        # 重新加载用户
         users = get_users()
         self.user_cards = {}
         for uid, name, xp, level, coins in users:
             card = LeftUserCard(uid, name)
             card.clicked.connect(self.on_user_selected)
-            self.left_layout_inner.addWidget(card)
+            # 在弹性空间之前插入卡片
+            self.left_layout_inner.insertWidget(self.left_layout_inner.count() - 1, card)
             self.user_cards[uid] = card
-        self.left_layout_inner.addStretch()
 
-        # if current user deleted or None, pick a fallback
+        # 如果当前用户被删除或为None，选择备用用户
         if self.current_user_id not in self.user_cards:
             all_uids = list(self.user_cards.keys())
             self.current_user_id = all_uids[0] if all_uids else None
@@ -561,52 +566,82 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_complete_repeat_task(self, task_id):
         """完成重复任务的逻辑"""
-        reply = QtWidgets.QMessageBox.question(
-            self,
-            "完成重复任务",
-            "确认完成此任务并领取奖励？",
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
-        )
+        # 先获取任务信息
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("""
+            SELECT name, xp_reward, max_completions, current_completions, completed 
+            FROM repeat_tasks WHERE id=?
+        """, (task_id,))
+        task_info = c.fetchone()
+        conn.close()
 
-        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            res = complete_repeat_task(task_id)
-            if res is None:
-                QtWidgets.QMessageBox.information(self, "提示", "无法完成此任务（可能已完成或不存在）。")
-            else:
-                gained = res["xp"]
-                leveled = res["leveled"]
-                coins_g = res["coins_gained"]
-                completion_count = res["completion_count"]
-                max_completions = res["max_completions"]
-                is_fully_completed = res["is_fully_completed"]
+        if not task_info:
+            QtWidgets.QMessageBox.information(self, "提示", "任务不存在。")
+            return
 
-                msg = f"获得 {gained} XP\n"
-                msg += f"完成次数: {completion_count}"
-                if max_completions > 0:
-                    msg += f"/{max_completions}"
+        name, xp_reward, max_completions, current_completions, completed = task_info
+
+        if completed:
+            QtWidgets.QMessageBox.information(self, "提示", "此任务已达到最大完成次数。")
+            return
+
+        # 弹出选择完成次数的对话框
+        from repeat_task_dialog import CompleteMultipleTimesDialog
+        dialog = CompleteMultipleTimesDialog(name, current_completions, max_completions, self)
+
+        if dialog.exec():
+            times = dialog.get_completion_count()
+
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "确认完成",
+                f"确认要完成 '{name}' {times} 次吗？\n总共将获得 {xp_reward * times} XP",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
+            )
+
+            if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+                from repeat_tasks import complete_repeat_task_multiple_times
+                res = complete_repeat_task_multiple_times(task_id, times)
+
+                if res is None:
+                    QtWidgets.QMessageBox.information(self, "提示", "无法完成任务（可能已完成或不存在）。")
                 else:
-                    msg += "次"
+                    times_completed = res["times_completed"]
+                    total_xp = res["total_xp"]
+                    leveled = res["leveled"]
+                    coins_g = res["coins_gained"]
+                    completion_count = res["completion_count"]
+                    is_fully_completed = res["is_fully_completed"]
 
-                if is_fully_completed:
-                    msg += "\n\n⚠️ 此任务已达到最大完成次数"
+                    msg = f"成功完成 {times_completed} 次 '{name}'\n"
+                    msg += f"获得 {total_xp} XP ({res['xp_per_completion']} XP/次)\n"
+                    msg += f"完成次数: {completion_count}"
+                    if max_completions > 0:
+                        msg += f"/{max_completions}"
+                    else:
+                        msg += "次"
 
-                if leveled:
-                    msg += f"\n升级了 {leveled} 次，总共获得 {coins_g} coins"
+                    if is_fully_completed:
+                        msg += "\n\n⚠️ 此任务已达到最大完成次数"
 
-                    level_up_details = res.get("level_up_details", [])
-                    if len(level_up_details) > 0:
-                        msg += "\n\n升级详情："
-                        for detail in level_up_details:
-                            from_lv = detail["from_level"]
-                            to_lv = detail["to_level"]
-                            base = detail["base_reward"]
-                            multiplier = detail["random_multiplier"]
-                            actual = detail["actual_reward"]
-                            msg += f"\nLv{from_lv}→Lv{to_lv}: {base} × {multiplier} = {actual} coins"
+                    if leveled:
+                        msg += f"\n升级了 {leveled} 次，总共获得 {coins_g} coins"
 
-                QtWidgets.QMessageBox.information(self, "奖励", msg)
-                # 使用带动画的刷新
-                self.refresh_all()
+                        level_up_details = res.get("level_up_details", [])
+                        if len(level_up_details) > 0:
+                            msg += "\n\n升级详情："
+                            for detail in level_up_details:
+                                from_lv = detail["from_level"]
+                                to_lv = detail["to_level"]
+                                base = detail["base_reward"]
+                                multiplier = detail["random_multiplier"]
+                                actual = detail["actual_reward"]
+                                msg += f"\nLv{from_lv}→Lv{to_lv}: {base} × {multiplier} = {actual} coins"
+
+                    QtWidgets.QMessageBox.information(self, "完成结果", msg)
+                    # 刷新显示
+                    self.refresh_all()
 
     def on_redeem_reward(self, reward_id):
         """兑换奖励"""

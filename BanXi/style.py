@@ -12,11 +12,20 @@ QWidget {
 #userCard {
     background: rgba(255,255,255,0.02);
     border-radius: 10px;
+    
 }
 #userCard[active="true"] {
     background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #1f6feb, stop:1 #6c63ff);
     color: white;
 }
+
+#userName {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
 #avatarCircle {
     border-radius: 24px;
     background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 #253046, stop:1 #1b2a3a);

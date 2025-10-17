@@ -27,9 +27,26 @@ class GachaTab(QtWidgets.QWidget):
         info_frame.setLayout(info_layout)
         layout.addWidget(info_frame)
 
-        # 抽卡按钮区域
-        button_frame = QtWidgets.QFrame()
-        button_layout = QtWidgets.QHBoxLayout()
+        # 抽卡结果显示区域 - 移到按钮上面
+        result_frame = QtWidgets.QFrame()
+        result_layout = QtWidgets.QVBoxLayout()
+
+        result_layout.addWidget(QtWidgets.QLabel("抽卡记录:"))
+        self.result_list = QtWidgets.QListWidget()
+        self.result_list.setObjectName("gachaResultList")
+        result_layout.addWidget(self.result_list)
+
+        result_frame.setLayout(result_layout)
+        layout.addWidget(result_frame)
+
+        # 抽卡按钮区域 - 使用水平布局固定在右下角
+        button_container = QtWidgets.QWidget()
+        button_container.setFixedHeight(100)  # 给按钮区域固定高度
+        button_layout = QtWidgets.QHBoxLayout(button_container)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 在左侧添加弹性空间，把按钮推到右边
+        button_layout.addStretch()
 
         # 单抽按钮
         self.single_draw_btn = QtWidgets.QPushButton("单次抽卡\n(600金币)")
@@ -45,21 +62,7 @@ class GachaTab(QtWidgets.QWidget):
         self.ten_draw_btn.clicked.connect(self.on_ten_draw)
         button_layout.addWidget(self.ten_draw_btn)
 
-        button_layout.addStretch()
-        button_frame.setLayout(button_layout)
-        layout.addWidget(button_frame)
-
-        # 抽卡结果显示区域
-        result_frame = QtWidgets.QFrame()
-        result_layout = QtWidgets.QVBoxLayout()
-
-        result_layout.addWidget(QtWidgets.QLabel("抽卡记录:"))
-        self.result_list = QtWidgets.QListWidget()
-        self.result_list.setObjectName("gachaResultList")
-        result_layout.addWidget(self.result_list)
-
-        result_frame.setLayout(result_layout)
-        layout.addWidget(result_frame)
+        layout.addWidget(button_container)
 
         self.setLayout(layout)
 

@@ -9,6 +9,8 @@ class LeftUserCard(QtWidgets.QFrame):
         self.setFixedHeight(80)
         self.setCursor(QtGui.QCursor(QtCore.Qt.CursorShape.PointingHandCursor))
         self.setObjectName("userCard")
+
+
         h = QtWidgets.QHBoxLayout()
         h.setContentsMargins(10, 10, 10, 10)
         h.setSpacing(10)
@@ -22,12 +24,21 @@ class LeftUserCard(QtWidgets.QFrame):
         font.setPointSize(14)
         self.avatar.setFont(font)
         h.addWidget(self.avatar)
+
         v = QtWidgets.QVBoxLayout()
+        v.setContentsMargins(0, 0, 0, 0)  # 移除内边距
+        v.setSpacing(0)  # 移除间距
+
         self.name_label = QtWidgets.QLabel(name)
         self.name_label.setObjectName("userName")
+        self.name_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)  # 文字水平居中
+
+        v.addStretch()  # 在上方添加弹性空间
         v.addWidget(self.name_label)
-        v.addStretch()
+        v.addStretch()  # 在下方添加弹性空间
+
         h.addLayout(v)
+        h.addStretch()  # 在右侧添加弹性空间，让整体居中
         self.setLayout(h)
 
     def mousePressEvent(self, e):
