@@ -15,7 +15,7 @@ from repeat_task_dialog import AddRepeatTaskDialog
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("伴习 v1.0.0 正式版发布!")  # 更新版本号
+        self.setWindowTitle("伴习 v1.1.0 新增铂金币")  # 更新版本号
         self.resize(1000, 680)
         main = QtWidgets.QWidget()
         main_layout = QtWidgets.QHBoxLayout()
@@ -103,11 +103,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_xp = QtWidgets.QLabel("经验：")
         self.progress = QtWidgets.QProgressBar()
         self.progress.setFixedHeight(18)
+        self.lbl_platinum = QtWidgets.QLabel("铂金币：")
         self.lbl_coins = QtWidgets.QLabel("金币：")
+
+        # 添加兑换按钮
+        exchange_btn_layout = QtWidgets.QHBoxLayout()
+        self.btn_exchange = QtWidgets.QPushButton("货币兑换")
+        self.btn_exchange.clicked.connect(self.open_exchange_dialog)
+        exchange_btn_layout.addWidget(self.btn_exchange)
+        exchange_btn_layout.addStretch()
+
         m_layout.addWidget(self.lbl_level)
         m_layout.addWidget(self.lbl_xp)
         m_layout.addWidget(self.progress)
+        m_layout.addWidget(self.lbl_platinum)
         m_layout.addWidget(self.lbl_coins)
+        m_layout.addLayout(exchange_btn_layout)
 
         # Developer mode button (在我的页)
         self.dev_btn = QtWidgets.QPushButton("开发者模式")
@@ -176,7 +187,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # 重新加载用户
         users = get_users()
         self.user_cards = {}
-        for uid, name, xp, level, coins in users:
+        for uid, name, xp, level, coins, platinum_coins in users:
             card = LeftUserCard(uid, name)
             card.clicked.connect(self.on_user_selected)
             # 在弹性空间之前插入卡片
@@ -264,7 +275,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.current_user_id is None:
             return
         tasks = get_tasks(self.current_user_id)
-        for tid, name, xp_reward, completed in tasks:
+        for tid, name, xp_reward, platinum_reward, completed in tasks:
             # 创建自定义的列表项控件
             item_widget = QtWidgets.QWidget()
             item_widget.setFixedHeight(60)
@@ -275,7 +286,10 @@ class MainWindow(QtWidgets.QMainWindow):
             # 任务信息标签
             task_label = QtWidgets.QLabel()
             status = "（已完成）" if completed else ""
-            task_label.setText(f"<b>{name}</b> {status}<br>奖励: {xp_reward} XP")
+            reward_text = f"{xp_reward} XP"
+            if platinum_reward > 0:
+                reward_text += f" + {platinum_reward} 铂金币"
+            task_label.setText(f"<b>{name}</b> {status}<br>奖励: {reward_text}")
             task_label.setWordWrap(True)
             task_label.setStyleSheet("color: #e6eef8; background: transparent;")
 
@@ -315,7 +329,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         tasks = get_repeat_tasks(self.current_user_id)
-        for tid, name, xp_reward, max_completions, current_completions, completed in tasks:
+        for tid, name, xp_reward, platinum_reward, max_completions, current_completions, completed in tasks:
             # 创建自定义的列表项控件
             item_widget = QtWidgets.QWidget()
             item_widget.setFixedHeight(70)
@@ -334,7 +348,12 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 completion_text += "次"
 
-            task_label.setText(f"<b>{name}</b> {status}<br>奖励: {xp_reward} XP/次<br>完成: {completion_text}")
+            # 构建奖励文本，包含铂金币信息
+            reward_text = f"{xp_reward} XP/次"
+            if platinum_reward > 0:
+                reward_text += f" + {platinum_reward} 铂金币/次"
+
+            task_label.setText(f"<b>{name}</b> {status}<br>奖励: {reward_text}<br>完成: {completion_text}")
             task_label.setWordWrap(True)
             task_label.setStyleSheet("color: #e6eef8; background: transparent;")
 
@@ -373,7 +392,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         rewards = get_rewards(self.current_user_id)
-        for rid, name, price, completed in rewards:
+        for rid, name, price, currency_type, completed in rewards:
             # 创建自定义的列表项控件
             item_widget = QtWidgets.QWidget()
             item_widget.setFixedHeight(60)
@@ -384,7 +403,16 @@ class MainWindow(QtWidgets.QMainWindow):
             # 奖励信息标签
             reward_label = QtWidgets.QLabel()
             status = "（已兑换）" if completed else ""
-            reward_label.setText(f"<b>{name}</b> {status}<br>所需金币: {price} coins")
+
+            # 根据货币类型显示不同的信息
+            if currency_type == 'platinum':
+                currency_display = f"{price} 铂金币"
+                currency_icon = "💎"
+            else:
+                currency_display = f"{price} coins"
+                currency_icon = "🪙"
+
+            reward_label.setText(f"<b>{name}</b> {status}<br>{currency_icon} 所需: {currency_display}")
             reward_label.setWordWrap(True)
             reward_label.setStyleSheet("color: #e6eef8; background: transparent;")
 
@@ -422,12 +450,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_level.setText("等级：-")
             self.lbl_xp.setText("经验：-")
             self.progress.setValue(0)
+            self.lbl_platinum.setText("铂金币：-")
             self.lbl_coins.setText("金币：-")
             return
         u = get_user(self.current_user_id)
         if u is None:
             return
-        uid, name, xp, level, coins = u
+        uid, name, xp, level, coins, platinum_coins = u
         self.lbl_level.setText(f"等级：{level}")
 
         xp_need = db.get_xp_required_for_level(level)
@@ -435,6 +464,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # progress in percent
         pct = int((xp / xp_need) * 100) if xp_need > 0 else 0
         self.progress.setValue(pct)
+        self.lbl_platinum.setText(f"铂金币：{platinum_coins}")
         self.lbl_coins.setText(f"金币：{coins}")
 
     def on_add_task(self):
@@ -442,9 +472,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         dialog = AddTaskDialog(self)
         if dialog.exec():
-            name, xp = dialog.get_data()
+            name, xp, platinum = dialog.get_data()
             if name:
-                add_task(self.current_user_id, name, xp)
+                add_task(self.current_user_id, name, xp, platinum)
                 self.refresh_tasks()
                 # no need to update HUD here (no XP change)
 
@@ -454,9 +484,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         dialog = AddRepeatTaskDialog(self)
         if dialog.exec():
-            name, xp, max_completions = dialog.get_data()
+            name, xp, max_completions, platinum = dialog.get_data()
             if name:
-                add_repeat_task(self.current_user_id, name, xp, max_completions)
+                add_repeat_task(self.current_user_id, name, xp, max_completions, platinum)
                 self.refresh_repeat_tasks()
 
     def on_add_shop(self):
@@ -464,9 +494,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         dialog = AddRewardDialog(self)  # 使用奖励对话框
         if dialog.exec():
-            name, price = dialog.get_data()
+            name, price, currency_type = dialog.get_data()
             if name:
-                add_reward(self.current_user_id, name, price)  # 添加个人奖励
+                add_reward(self.current_user_id, name, price, currency_type)  # 添加个人奖励
                 self.refresh_rewards()
 
     # 修改 on_shop_double_click 函数为删除奖励
@@ -544,11 +574,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 gained = res["xp"]
                 leveled = res["leveled"]
                 coins_g = res["coins_gained"]
+                platinum_g = res.get("platinum_gained", 0)
                 level_up_details = res.get("level_up_details", [])
 
                 msg = f"获得 {gained} XP"
+                if platinum_g > 0 and not leveled:
+                    msg += f" 和 {platinum_g} 铂金币"
                 if leveled:
                     msg += f"\n升级了 {leveled} 次，总共获得 {coins_g} coins"
+                    if platinum_g > 0:
+                        msg += f" 和 {platinum_g} 铂金币"
 
                     if len(level_up_details) > 0:
                         msg += "\n\n升级详情："
@@ -558,7 +593,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             base = detail["base_reward"]
                             multiplier = detail["random_multiplier"]
                             actual = detail["actual_reward"]
+                            platinum_reward = detail.get("platinum_reward", 0)
                             msg += f"\nLv{from_lv}→Lv{to_lv}: {base} × {multiplier} = {actual} coins"
+                            if platinum_reward > 0:
+                                msg += f" + {platinum_reward} 铂金币"
 
                 QtWidgets.QMessageBox.information(self, "奖励", msg)
                 # 正常刷新，触发动画
@@ -566,11 +604,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_complete_repeat_task(self, task_id):
         """完成重复任务的逻辑"""
-        # 先获取任务信息
+        # 先获取任务信息（包含铂金币奖励）
         conn = get_db_connection()
         c = conn.cursor()
         c.execute("""
-            SELECT name, xp_reward, max_completions, current_completions, completed 
+            SELECT name, xp_reward, platinum_reward, max_completions, current_completions, completed
             FROM repeat_tasks WHERE id=?
         """, (task_id,))
         task_info = c.fetchone()
@@ -580,7 +618,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.information(self, "提示", "任务不存在。")
             return
 
-        name, xp_reward, max_completions, current_completions, completed = task_info
+        name, xp_reward, platinum_reward, max_completions, current_completions, completed = task_info
 
         if completed:
             QtWidgets.QMessageBox.information(self, "提示", "此任务已达到最大完成次数。")
@@ -588,15 +626,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 弹出选择完成次数的对话框
         from repeat_task_dialog import CompleteMultipleTimesDialog
-        dialog = CompleteMultipleTimesDialog(name, current_completions, max_completions, self)
-
+        dialog = CompleteMultipleTimesDialog(name, task_id, current_completions, max_completions, self)
         if dialog.exec():
             times = dialog.get_completion_count()
+
+            # 构建确认消息，包含铂金币信息
+            total_xp = xp_reward * times
+            total_platinum = platinum_reward * times
+            reward_msg = f"{total_xp} XP"
+            if total_platinum > 0:
+                reward_msg += f" + {total_platinum} 铂金币"
 
             reply = QtWidgets.QMessageBox.question(
                 self,
                 "确认完成",
-                f"确认要完成 '{name}' {times} 次吗？\n总共将获得 {xp_reward * times} XP",
+                f"确认要完成 '{name}' {times} 次吗？\n总共将获得 {reward_msg}",
                 QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
             )
 
@@ -611,33 +655,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     total_xp = res["total_xp"]
                     leveled = res["leveled"]
                     coins_g = res["coins_gained"]
+                    platinum_g = res.get("platinum_gained", 0)
                     completion_count = res["completion_count"]
                     is_fully_completed = res["is_fully_completed"]
 
-                    msg = f"成功完成 {times_completed} 次 '{name}'\n"
-                    msg += f"获得 {total_xp} XP ({res['xp_per_completion']} XP/次)\n"
-                    msg += f"完成次数: {completion_count}"
-                    if max_completions > 0:
-                        msg += f"/{max_completions}"
-                    else:
-                        msg += "次"
-
-                    if is_fully_completed:
-                        msg += "\n\n⚠️ 此任务已达到最大完成次数"
-
-                    if leveled:
-                        msg += f"\n升级了 {leveled} 次，总共获得 {coins_g} coins"
-
-                        level_up_details = res.get("level_up_details", [])
-                        if len(level_up_details) > 0:
-                            msg += "\n\n升级详情："
-                            for detail in level_up_details:
-                                from_lv = detail["from_level"]
-                                to_lv = detail["to_level"]
-                                base = detail["base_reward"]
-                                multiplier = detail["random_multiplier"]
-                                actual = detail["actual_reward"]
-                                msg += f"\nLv{from_lv}→Lv{to_lv}: {base} × {multiplier} = {actual} coins"
+                    # 使用优化的批量任务完成通知函数
+                    msg = self._format_batch_completion_message(res, name, max_completions, is_fully_completed)
 
                     QtWidgets.QMessageBox.information(self, "完成结果", msg)
                     # 刷新显示
@@ -648,7 +671,7 @@ class MainWindow(QtWidgets.QMainWindow):
         reply = QtWidgets.QMessageBox.question(
             self,
             "兑换奖励",
-            "确认兑换此奖励？将扣除相应金币。",
+            "确认兑换此奖励？将扣除相应货币。",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
         )
 
@@ -657,12 +680,20 @@ class MainWindow(QtWidgets.QMainWindow):
             if not res["success"]:
                 if res["reason"] == "not_enough_coins":
                     QtWidgets.QMessageBox.warning(self, "失败", "金币不足。")
+                elif res["reason"] == "not_enough_platinum":
+                    QtWidgets.QMessageBox.warning(self, "失败", "铂金币不足。")
                 elif res["reason"] == "already_redeemed":
                     QtWidgets.QMessageBox.warning(self, "失败", "奖励已兑换。")
                 else:
                     QtWidgets.QMessageBox.warning(self, "失败", "兑换失败。")
             else:
-                QtWidgets.QMessageBox.information(self, "成功", f"兑换成功，剩余金币：{res['remaining']}")
+                # 根据货币类型显示不同的成功消息
+                if res["currency_type"] == "platinum":
+                    message = f"兑换成功！\n剩余铂金币：{res['remaining_platinum']}\n剩余金币：{res['remaining_coins']}"
+                else:
+                    message = f"兑换成功！\n剩余金币：{res['remaining_coins']}\n剩余铂金币：{res['remaining_platinum']}"
+
+                QtWidgets.QMessageBox.information(self, "成功", message)
                 # 使用带动画的刷新
                 self.refresh_all()
 
@@ -776,3 +807,149 @@ class MainWindow(QtWidgets.QMainWindow):
                         parent_dialog.accept()
                 else:
                     QtWidgets.QMessageBox.warning(self, "失败", "删除失败或用户不存在.")
+
+    def open_exchange_dialog(self):
+        """打开货币兑换对话框"""
+        if self.current_user_id is None:
+            QtWidgets.QMessageBox.warning(self, "提示", "请先选择用户")
+            return
+
+        from db import exchange_platinum_to_gold, PLATINUM_TO_GOLD_RATE
+
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("货币兑换")
+        dlg.setFixedSize(400, 250)
+        layout = QtWidgets.QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        # 显示当前余额
+        u = get_user(self.current_user_id)
+        if u is None:
+            return
+        uid, name, xp, level, coins, platinum_coins = u
+
+        info_label = QtWidgets.QLabel(f"当前余额：\n铂金币: {platinum_coins}\n金币: {coins}\n\n兑换比例: 1 铂金币 = {PLATINUM_TO_GOLD_RATE} 金币\n\n注意：只能将铂金币兑换为金币（单向兑换）")
+        info_label.setStyleSheet("font-size: 11pt; padding: 10px;")
+        layout.addWidget(info_label)
+
+        # 铂金币换金币
+        platinum_to_gold_group = QtWidgets.QGroupBox("铂金币 → 金币")
+        ptg_layout = QtWidgets.QHBoxLayout()
+        self.platinum_input = QtWidgets.QSpinBox()
+        self.platinum_input.setMinimum(0)
+        self.platinum_input.setMaximum(platinum_coins)
+        self.platinum_input.setValue(0)
+        ptg_layout.addWidget(QtWidgets.QLabel("铂金币数量:"))
+        ptg_layout.addWidget(self.platinum_input)
+        btn_ptg = QtWidgets.QPushButton("兑换")
+        btn_ptg.clicked.connect(lambda: self.do_platinum_to_gold_exchange(dlg))
+        ptg_layout.addWidget(btn_ptg)
+        platinum_to_gold_group.setLayout(ptg_layout)
+        layout.addWidget(platinum_to_gold_group)
+
+        # 关闭按钮
+        btn_close = QtWidgets.QPushButton("关闭")
+        btn_close.clicked.connect(dlg.accept)
+        layout.addStretch()
+        layout.addWidget(btn_close)
+
+        dlg.setLayout(layout)
+        dlg.exec()
+
+    def do_platinum_to_gold_exchange(self, dialog):
+        """执行铂金币换金币"""
+        from db import exchange_platinum_to_gold
+
+        amount = self.platinum_input.value()
+        if amount <= 0:
+            QtWidgets.QMessageBox.warning(self, "错误", "请输入有效的铂金币数量")
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "确认兑换",
+            f"确认将 {amount} 铂金币兑换为 {amount * 100} 金币？",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No
+        )
+
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            res = exchange_platinum_to_gold(self.current_user_id, amount)
+            if res["success"]:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "兑换成功",
+                    f"成功兑换 {res['platinum_spent']} 铂金币为 {res['gold_gained']} 金币\n"
+                    f"剩余铂金币: {res['remaining_platinum']}\n"
+                    f"当前金币: {res['new_gold']}"
+                )
+                self.refresh_all()
+                dialog.accept()
+            else:
+                reason = res.get("reason", "unknown")
+                if reason == "not_enough_platinum":
+                    QtWidgets.QMessageBox.warning(self, "失败", "铂金币不足")
+                else:
+                    QtWidgets.QMessageBox.warning(self, "失败", f"兑换失败: {reason}")
+
+    def _format_batch_completion_message(self, res, task_name, max_completions, is_fully_completed):
+        """
+        优化的批量任务完成通知格式化函数
+        遵循单任务完成通知的模式，确保铂金币显示的一致性
+
+        参数:
+            res: 任务完成结果字典
+            task_name: 任务名称
+            max_completions: 最大完成次数
+            is_fully_completed: 是否已完全完成
+
+        返回:
+            str: 格式化的通知消息
+        """
+        times_completed = res["times_completed"]
+        total_xp = res["total_xp"]
+        leveled = res["leveled"]
+        coins_g = res["coins_gained"]
+        platinum_g = res.get("platinum_gained", 0)
+        completion_count = res["completion_count"]
+
+        # 基础信息：任务完成情况
+        msg = f"成功完成 {times_completed} 次 '{task_name}'\n"
+        msg += f"获得 {total_xp} XP ({res['xp_per_completion']} XP/次)\n"
+        msg += f"完成次数: {completion_count}"
+        if max_completions > 0:
+            msg += f"/{max_completions}"
+        else:
+            msg += "次"
+
+        # 任务完成状态提示
+        if is_fully_completed:
+            msg += "\n\n⚠️ 此任务已达到最大完成次数"
+
+        # 铂金币奖励显示（修复：遵循单任务模式）
+        if platinum_g > 0 and not leveled:
+            msg += f"\n获得 {platinum_g} 铂金币"
+
+        # 升级奖励显示
+        if leveled:
+            msg += f"\n升级了 {leveled} 次，总共获得 {coins_g} coins"
+            if platinum_g > 0:
+                msg += f" 和 {platinum_g} 铂金币"
+
+            # 升级详情
+            level_up_details = res.get("level_up_details", [])
+            if len(level_up_details) > 0:
+                msg += "\n\n升级详情："
+                for detail in level_up_details:
+                    from_lv = detail["from_level"]
+                    to_lv = detail["to_level"]
+                    base = detail["base_reward"]
+                    multiplier = detail["random_multiplier"]
+                    actual = detail["actual_reward"]
+                    platinum_reward = detail.get("platinum_reward", 0)
+                    msg += f"\nLv{from_lv}→Lv{to_lv}: {base} × {multiplier} = {actual} coins"
+                    if platinum_reward > 0:
+                        msg += f" + {platinum_reward} 铂金币"
+
+        return msg
+
+

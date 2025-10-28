@@ -15,6 +15,7 @@ def init_repeat_tasks_table():
         user_id INTEGER,
         name TEXT,
         xp_reward INTEGER,
+        platinum_reward INTEGER DEFAULT 0,
         max_completions INTEGER,
         current_completions INTEGER DEFAULT 0,
         completed INTEGER DEFAULT 0,
@@ -24,6 +25,14 @@ def init_repeat_tasks_table():
     """)
 
     conn.commit()
+
+    # 迁移：为现有重复任务添加 platinum_reward 列（如果不存在）
+    try:
+        c.execute("SELECT platinum_reward FROM repeat_tasks LIMIT 1")
+    except sqlite3.OperationalError:
+        c.execute("ALTER TABLE repeat_tasks ADD COLUMN platinum_reward INTEGER DEFAULT 0")
+        conn.commit()
+        print("已添加 platinum_reward 列到 repeat_tasks 表")
 
     # 检查是否已有重复任务，如果没有则添加默认任务
     c.execute("SELECT COUNT(*) FROM repeat_tasks")
@@ -55,13 +64,13 @@ def init_repeat_tasks_table():
 # -------------------------
 # 添加重复任务
 # -------------------------
-def add_repeat_task(user_id, name, xp_reward, max_completions=0):
+def add_repeat_task(user_id, name, xp_reward, max_completions=0, platinum_reward=0):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("""
-        INSERT INTO repeat_tasks(user_id, name, xp_reward, max_completions) 
-        VALUES(?,?,?,?)
-    """, (user_id, name, xp_reward, max_completions))
+        INSERT INTO repeat_tasks(user_id, name, xp_reward, platinum_reward, max_completions)
+        VALUES(?,?,?,?,?)
+    """, (user_id, name, xp_reward, platinum_reward, max_completions))
     conn.commit()
     conn.close()
 
@@ -72,9 +81,9 @@ def get_repeat_tasks(user_id):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("""
-        SELECT id, name, xp_reward, max_completions, current_completions, completed 
-        FROM repeat_tasks 
-        WHERE user_id=? 
+        SELECT id, name, xp_reward, platinum_reward, max_completions, current_completions, completed
+        FROM repeat_tasks
+        WHERE user_id=?
         ORDER BY completed, id
     """, (user_id,))
     rows = c.fetchall()
@@ -93,7 +102,7 @@ def complete_repeat_task(task_id):
 
     # 查询任务信息
     c.execute("""
-        SELECT user_id, name, xp_reward, max_completions, current_completions, completed 
+        SELECT user_id, name, xp_reward, platinum_reward, max_completions, current_completions, completed
         FROM repeat_tasks WHERE id=?
     """, (task_id,))
     t = c.fetchone()
@@ -102,7 +111,7 @@ def complete_repeat_task(task_id):
         conn.close()
         return None
 
-    user_id, name, xp_reward, max_completions, current_completions, completed = t
+    user_id, name, xp_reward, task_platinum_reward, max_completions, current_completions, completed = t
 
     if completed:
         conn.close()
@@ -122,19 +131,23 @@ def complete_repeat_task(task_id):
     """, (new_completions, new_completed, task_id))
 
     # 获取用户当前数据
-    c.execute("SELECT xp, level, coins FROM users WHERE id=?", (user_id,))
+    c.execute("SELECT xp, level, coins, platinum_coins FROM users WHERE id=?", (user_id,))
     u = c.fetchone()
     if u is None:
         conn.commit()
         conn.close()
         return None
 
-    cur_xp, level, coins = u
+    cur_xp, level, coins, platinum_coins = u
     new_xp = cur_xp + xp_reward
+
+    # 添加任务完成时的铂金币奖励
+    platinum_coins += task_platinum_reward
 
     # 修复：使用线性增长公式
     xp_needed = get_xp_required_for_level(level)
     gained_coins = 0
+    gained_platinum = task_platinum_reward  # 初始化为任务奖励的铂金币
     leveled = 0
     level_up_rewards = []
 
@@ -152,18 +165,25 @@ def complete_repeat_task(task_id):
         coins += reward
         gained_coins += reward
 
+        # 每2级奖励1个铂金币
+        if level % 2 == 0:
+            platinum_coins += 1
+            gained_platinum += 1
+
         level_up_rewards.append({
             "from_level": level - 1,
             "to_level": level,
             "base_reward": base_reward,
             "random_multiplier": round(random_multiplier, 2),
-            "actual_reward": reward
+            "actual_reward": reward,
+            "platinum_reward": 1 if level % 2 == 0 else 0
         })
 
         # 修复：使用线性增长公式计算下一级所需经验
         xp_needed = get_xp_required_for_level(level)
 
-    c.execute("UPDATE users SET xp=?, level=?, coins=? WHERE id=?", (new_xp, level, coins, user_id))
+    c.execute("UPDATE users SET xp=?, level=?, coins=?, platinum_coins=? WHERE id=?",
+              (new_xp, level, coins, platinum_coins, user_id))
     conn.commit()
     conn.close()
 
@@ -173,6 +193,7 @@ def complete_repeat_task(task_id):
         "xp": xp_reward,
         "leveled": leveled,
         "coins_gained": gained_coins,
+        "platinum_gained": gained_platinum,
         "new_level": level,
         "new_xp": new_xp,
         "completion_count": new_completions,
@@ -213,7 +234,7 @@ def complete_repeat_task_multiple_times(task_id, times):
 
         # 查询任务信息
         c.execute("""
-            SELECT user_id, name, xp_reward, max_completions, current_completions, completed 
+            SELECT user_id, name, xp_reward, platinum_reward, max_completions, current_completions, completed
             FROM repeat_tasks WHERE id=?
         """, (task_id,))
         t = c.fetchone()
@@ -222,7 +243,7 @@ def complete_repeat_task_multiple_times(task_id, times):
             conn.close()
             return None
 
-        user_id, name, xp_reward, max_completions, current_completions, completed = t
+        user_id, name, xp_reward, task_platinum_reward, max_completions, current_completions, completed = t
 
         if completed:
             conn.close()
@@ -253,20 +274,25 @@ def complete_repeat_task_multiple_times(task_id, times):
         """, (new_completions, new_completed, task_id))
 
         # 获取用户当前数据
-        c.execute("SELECT xp, level, coins FROM users WHERE id=?", (user_id,))
+        c.execute("SELECT xp, level, coins, platinum_coins FROM users WHERE id=?", (user_id,))
         u = c.fetchone()
         if u is None:
             conn.commit()
             conn.close()
             return None
 
-        cur_xp, level, coins = u
+        cur_xp, level, coins, platinum_coins = u
         total_xp_gained = xp_reward * times
         new_xp = cur_xp + total_xp_gained
+
+        # 添加任务完成时的铂金币奖励（乘以完成次数）
+        total_task_platinum = task_platinum_reward * times
+        platinum_coins += total_task_platinum
 
         # 计算升级逻辑
         xp_needed = get_xp_required_for_level(level)
         gained_coins = 0
+        gained_platinum = total_task_platinum  # 初始化为任务奖励的铂金币
         leveled = 0
         level_up_rewards = []
 
@@ -284,17 +310,24 @@ def complete_repeat_task_multiple_times(task_id, times):
             coins += reward
             gained_coins += reward
 
+            # 每2级奖励1个铂金币
+            if level % 2 == 0:
+                platinum_coins += 1
+                gained_platinum += 1
+
             level_up_rewards.append({
                 "from_level": level - 1,
                 "to_level": level,
                 "base_reward": base_reward,
                 "random_multiplier": round(random_multiplier, 2),
-                "actual_reward": reward
+                "actual_reward": reward,
+                "platinum_reward": 1 if level % 2 == 0 else 0
             })
 
             xp_needed = get_xp_required_for_level(level)
 
-        c.execute("UPDATE users SET xp=?, level=?, coins=? WHERE id=?", (new_xp, level, coins, user_id))
+        c.execute("UPDATE users SET xp=?, level=?, coins=?, platinum_coins=? WHERE id=?",
+                  (new_xp, level, coins, platinum_coins, user_id))
         conn.commit()
         conn.close()
 
@@ -306,6 +339,7 @@ def complete_repeat_task_multiple_times(task_id, times):
             "xp_per_completion": xp_reward,
             "leveled": leveled,
             "coins_gained": gained_coins,
+            "platinum_gained": gained_platinum,
             "new_level": level,
             "new_xp": new_xp,
             "completion_count": new_completions,

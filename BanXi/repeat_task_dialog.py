@@ -1,4 +1,5 @@
 from PySide6 import QtWidgets, QtCore
+from db import get_db_connection  # 添加导入
 
 
 class NoArrowSpinBox(QtWidgets.QSpinBox):
@@ -12,7 +13,7 @@ class AddRepeatTaskDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("添加重复任务")
-        self.setFixedSize(400, 280)
+        self.setFixedSize(400, 340)
         self.setStyleSheet("""
             QDialog {
                 background-color: #1e1e1e;
@@ -88,6 +89,17 @@ class AddRepeatTaskDialog(QtWidgets.QDialog):
         layout.addWidget(xp_label)
         layout.addWidget(self.xp_spin)
 
+        # 铂金币奖励
+        platinum_label = QtWidgets.QLabel("每次完成铂金币奖励（可选）")
+        self.platinum_spin = NoArrowSpinBox()
+        self.platinum_spin.setRange(0, 100)
+        self.platinum_spin.setValue(0)
+        self.platinum_spin.setSuffix(" 铂金币")
+        self.platinum_spin.setSpecialValueText("无")
+
+        layout.addWidget(platinum_label)
+        layout.addWidget(self.platinum_spin)
+
         # 最大完成次数
         max_layout = QtWidgets.QHBoxLayout()
         max_label = QtWidgets.QLabel("最大完成次数")
@@ -127,19 +139,35 @@ class AddRepeatTaskDialog(QtWidgets.QDialog):
         return (
             self.name_edit.text().strip(),
             self.xp_spin.value(),
-            self.max_completions_spin.value()
+            self.max_completions_spin.value(),
+            self.platinum_spin.value()
         )
 
 
 class CompleteMultipleTimesDialog(QtWidgets.QDialog):
-    def __init__(self, task_name, current_completions, max_completions, parent=None):
+    def __init__(self, task_name, task_id, current_completions, max_completions, parent=None):
         super().__init__(parent)
         self.task_name = task_name
+        self.task_id = task_id  # 保存任务ID
         self.current_completions = current_completions
         self.max_completions = max_completions
+        self.xp_reward, self.platinum_reward = self.get_task_rewards()  # 从数据库获取奖励信息
         self.setWindowTitle("多次完成任务")
         self.setFixedSize(400, 200)
         self.setup_ui()
+
+    def get_task_rewards(self):
+        """从数据库获取任务的奖励信息（经验和铂金币）"""
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT xp_reward, platinum_reward FROM repeat_tasks WHERE id=?", (self.task_id,))
+        result = c.fetchone()
+        conn.close()
+
+        if result:
+            return result[0], result[1]  # 返回 (xp_reward, platinum_reward)
+        else:
+            return 10, 0  # 默认值，如果找不到任务
 
     def setup_ui(self):
         layout = QtWidgets.QVBoxLayout()
@@ -153,6 +181,11 @@ class CompleteMultipleTimesDialog(QtWidgets.QDialog):
             info_text += f" / {self.max_completions}"
         else:
             info_text += " 次"
+        # 构建奖励信息，包含铂金币
+        reward_text = f"{self.xp_reward} XP"
+        if self.platinum_reward > 0:
+            reward_text += f" + {self.platinum_reward} 铂金币"
+        info_text += f"\n每次奖励: {reward_text}"
 
         info_label = QtWidgets.QLabel(info_text)
         info_label.setStyleSheet("color: #e6eef8; font-size: 13px;")
@@ -206,13 +239,20 @@ class CompleteMultipleTimesDialog(QtWidgets.QDialog):
 
         # 连接信号，实时更新预计奖励
         self.count_spin.valueChanged.connect(self.update_reward_info)
+        # 初始化奖励显示
+        self.update_reward_info(1)
 
     def update_reward_info(self, count):
-        # 这里需要从数据库获取任务的XP奖励，暂时用占位符
-        # 实际使用时需要从数据库查询
-        xp_per_completion = 10  # 默认值，实际应该从数据库获取
-        total_xp = xp_per_completion * count
-        self.reward_label.setText(f"预计获得: {total_xp} XP")
+        """更新预计奖励信息，包含经验和铂金币"""
+        total_xp = self.xp_reward * count
+        total_platinum = self.platinum_reward * count
+
+        # 构建预计奖励文本
+        reward_text = f"{total_xp} XP"
+        if total_platinum > 0:
+            reward_text += f" + {total_platinum} 铂金币"
+
+        self.reward_label.setText(f"预计获得: {reward_text}")
 
     def get_completion_count(self):
         return self.count_spin.value()
